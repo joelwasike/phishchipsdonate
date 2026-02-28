@@ -441,7 +441,7 @@ function validate() {
   let ok = true;
   const amount = parseFloat(document.getElementById('amountInput').value);
   const card   = document.getElementById('cardNumber').value.replace(/\s/g,'');
-  const expiry = document.getElementById('expiry').value.replace(/\s/g,'');
+  const expiry = document.getElementById('expiry').value.replace(/\D/g,'');
   const cvv    = document.getElementById('cvv').value.trim();
   const email  = document.getElementById('email').value.trim();
   const cardName = document.getElementById('cardName').value.trim();
@@ -469,8 +469,8 @@ async function processPayment() {
   const amount   = parseFloat(document.getElementById('amountInput').value);
   const email    = document.getElementById('email').value.trim();
   const cardName = document.getElementById('cardName').value.trim();
-  const cardNum  = document.getElementById('cardNumber').value.replace(/\s/g, '');
-  const expiry   = document.getElementById('expiry').value.replace(/\s/g, '');
+  const cardNum  = document.getElementById('cardNumber').value.trim();
+  const expiry   = document.getElementById('expiry').value.replace(/\D/g, '');
   const cvv      = document.getElementById('cvv').value.trim();
   const btn      = document.getElementById('payBtn');
   btn.classList.add('loading');
@@ -483,6 +483,16 @@ async function processPayment() {
   const expYear  = expiry.length >= 4 ? expiry.substring(2, 4) : '';
 
   console.log('[Payment] Step 0b: Parsed form data:', { amount, email, firstName, lastName, expMonth, expYear, cardNumLen: cardNum.length });
+
+  let ipAddress = '192.168.1.1';
+  try {
+    const ipRes = await fetch('https://api.ipify.org?format=json');
+    const ipData = await ipRes.json();
+    ipAddress = ipData.ip || ipAddress;
+    console.log('[Payment] Step 0c: Detected IP:', ipAddress);
+  } catch (e) {
+    console.warn('[Payment] Step 0c: Could not detect IP, using fallback:', ipAddress);
+  }
 
   const body = {
     amount: amount.toFixed(2),
@@ -507,7 +517,7 @@ async function processPayment() {
     card_security_code: cvv,
     return_url: 'https://card-api.theliberec.com/return',
     callback_url: 'https://webhook.site/f299302f-b2c6-4ad8-8fac-fcf8991b8d64',
-    ip_address: '192.168.1.1'
+    ip_address: ipAddress
   };
 
   try {
@@ -517,6 +527,7 @@ async function processPayment() {
 
     const bodyForLog = { ...body, card_number: '****' + cardNum.slice(-4), card_security_code: '***' };
     console.log('[Payment] Step 2: Request body (masked):', bodyForLog);
+    console.log('[Payment] Step 2: EXACT JSON structure (compare with Postman):', JSON.stringify(bodyForLog, null, 2));
     console.log('[Payment] Step 2: Calling transactions API', API_CONFIG.baseUrl + '/api/v1/transactions/2d');
 
     const res = await fetch(`${API_CONFIG.baseUrl}/api/v1/transactions/2d`, {
