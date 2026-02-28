@@ -372,20 +372,33 @@ const API_CONFIG = {
 };
 
 async function getToken() {
+  console.log('[Login] Step 1: Calling login API', API_CONFIG.baseUrl + '/api/v1/merchants/login');
+  const loginBody = { email: API_CONFIG.loginEmail, password: API_CONFIG.loginPassword };
+  console.log('[Login] Step 2: Request body:', { ...loginBody, password: '***' });
   const res = await fetch(`${API_CONFIG.baseUrl}/api/v1/merchants/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email: API_CONFIG.loginEmail,
-      password: API_CONFIG.loginPassword
-    })
+    body: JSON.stringify(loginBody)
   });
-  const data = await res.json();
-  console.log('[Login] Response:', { status: res.status, ok: res.ok, hasToken: !!data.token });
+  console.log('[Login] Step 3: Response status:', res.status, res.statusText);
+  let data;
+  try {
+    data = await res.json();
+    console.log('[Login] Step 4: Parsed JSON:', data);
+  } catch (e) {
+    const text = await res.text();
+    console.error('[Login] Step 4 FAILED: Response not JSON:', text);
+    throw new Error('Login failed: invalid response');
+  }
   if (!res.ok) {
-    console.error('[Login] Failed:', data);
+    console.error('[Login] Step 5 FAILED: API error:', data);
     throw new Error(data.message || data.error || 'Login failed');
   }
+  if (!data.token) {
+    console.error('[Login] Step 5 FAILED: No token in response:', data);
+    throw new Error('Login failed: no token received');
+  }
+  console.log('[Login] Step 5: Token received (length:', data.token.length + ')');
   return data.token;
 }
 
@@ -445,7 +458,14 @@ function validate() {
 // 🔌 CARD API — 2D transaction
 // ══════════════════════════════════════════════════
 async function processPayment() {
-  if (!validate()) return;
+  console.log('[Payment] ========== PAYMENT FLOW START ==========');
+  console.log('[Payment] Step 0: Validating form...');
+  if (!validate()) {
+    console.log('[Payment] Step 0 FAILED: Validation failed');
+    return;
+  }
+  console.log('[Payment] Step 0: Validation passed');
+
   const amount   = parseFloat(document.getElementById('amountInput').value);
   const email    = document.getElementById('email').value.trim();
   const cardName = document.getElementById('cardName').value.trim();
@@ -461,6 +481,8 @@ async function processPayment() {
 
   const expMonth = expiry.length >= 2 ? expiry.substring(0, 2) : '';
   const expYear  = expiry.length >= 4 ? expiry.substring(2, 4) : '';
+
+  console.log('[Payment] Step 0b: Parsed form data:', { amount, email, firstName, lastName, expMonth, expYear, cardNumLen: cardNum.length });
 
   const body = {
     amount: amount.toFixed(2),
@@ -489,9 +511,13 @@ async function processPayment() {
   };
 
   try {
-    console.log('[Payment] 1. Getting token...');
+    console.log('[Payment] Step 1: Getting token from login API...');
     const token = await getToken();
-    console.log('[Payment] 2. Token received, calling transactions API...');
+    console.log('[Payment] Step 1 DONE: Token received');
+
+    const bodyForLog = { ...body, card_number: '****' + cardNum.slice(-4), card_security_code: '***' };
+    console.log('[Payment] Step 2: Request body (masked):', bodyForLog);
+    console.log('[Payment] Step 2: Calling transactions API', API_CONFIG.baseUrl + '/api/v1/transactions/2d');
 
     const res = await fetch(`${API_CONFIG.baseUrl}/api/v1/transactions/2d`, {
       method: 'POST',
@@ -502,34 +528,47 @@ async function processPayment() {
       body: JSON.stringify(body)
     });
 
-    const data = await res.json();
-    console.log('[Payment] 3. API response:', { status: res.status, ok: res.ok, data });
+    console.log('[Payment] Step 3: Response status:', res.status, res.statusText);
+
+    let data;
+    try {
+      data = await res.json();
+      console.log('[Payment] Step 3: Parsed response:', data);
+    } catch (e) {
+      const text = await res.text();
+      console.error('[Payment] Step 3 FAILED: Response not JSON. Body:', text);
+      throw new Error(`API returned ${res.status}: ${text.slice(0, 200)}`);
+    }
 
     if (!res.ok) {
-      console.error('[Payment] API error:', data);
-      throw new Error(data.message || data.error || 'Payment request failed');
+      const errMsg = data.message || data.error || data.errors || JSON.stringify(data);
+      console.error('[Payment] Step 4 FAILED: API error:', data);
+      throw new Error('API ' + res.status + ': ' + (typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg)));
     }
 
     const finalStatus = (data.status || data.status_code || '').toUpperCase();
-    const terminalStatuses = ['CAPTURED', 'COMPLETED', 'SUCCESSFUL', 'FAILED'];
-    console.log('[Payment] 4. Status:', finalStatus, '| redirect_url:', data.redirect_url);
+    console.log('[Payment] Step 4: Status =', finalStatus, '| redirect_url =', data.redirect_url);
 
-    if (!terminalStatuses.includes(finalStatus) && data.redirect_url) {
-      console.log('[Payment] 5. Redirecting to 3DS:', data.redirect_url);
+    if (data.redirect_url) {
+      console.log('[Payment] Step 5: Redirecting to 3DS:', data.redirect_url);
       window.location.href = data.redirect_url;
       return;
     }
 
     if (finalStatus === 'FAILED') {
-      console.error('[Payment] 5. Payment FAILED. Full response:', data);
+      console.error('[Payment] Step 5 FAILED: Payment declined. Full response:', data);
       throw new Error('Payment was declined or failed');
     }
 
-    console.log('[Payment] 5. Success');
+    console.log('[Payment] Step 5: Success - showing success view');
     showSuccess(email, amount);
+    console.log('[Payment] ========== PAYMENT FLOW END (SUCCESS) ==========');
 
   } catch (err) {
-    console.error('[Payment] Error:', err);
+    console.error('[Payment] CATCH: Error at step -', err);
+    console.error('[Payment] Error message:', err.message);
+    console.error('[Payment] Error stack:', err.stack);
+    console.log('[Payment] ========== PAYMENT FLOW END (ERROR) ==========');
     btn.classList.remove('loading');
     alert('Payment failed: ' + (err.message || 'Unknown error'));
   }
